@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WAYFINDING | Global Tactical Route Intelligence</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Syncopate:wght@400;700&family=JetBrains+Mono:wght@300;500&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --primary: #00f2ff;
+            --danger: #ff4757;
+            --safe: #2ed573;
+            --warning: #ffa502;
+            --bg: #020205;
+            --glass: rgba(10, 10, 20, 0.9);
+            --border: rgba(0, 242, 255, 0.2);
+            --font-main: 'Inter', sans-serif;
+            --font-tech: 'JetBrains Mono', monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body, html { height: 100%; background: var(--bg); color: white; overflow: hidden; font-family: var(--font-main); }
+
+        .scanline {
+            width: 100%; height: 100px; z-index: 10;
+            background: linear-gradient(0deg, transparent 0%, rgba(0, 242, 255, 0.05) 50%, transparent 100%);
+            position: absolute; bottom: 100%; animation: scan 6s linear infinite; pointer-events: none;
+        }
+        @keyframes scan { to { bottom: -100px; } }
+
+        .grid-bg {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
+            background-size: 60px 60px; z-index: -1; opacity: 0.15;
+        }
+
+        .app-container {
+            display: grid;
+            grid-template-columns: 420px 1fr;
+            height: 100vh;
+            padding: 15px;
+            gap: 15px;
+        }
+
+        .sidebar {
+            background: var(--glass);
+            backdrop-filter: blur(30px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 25px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 100;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+            overflow-y: auto;
+        }
+
+        .status-banner {
+            background: rgba(0, 242, 255, 0.05);
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px dashed var(--border);
+            font-family: var(--font-tech);
+            font-size: 0.75rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .pulse-dot {
+            width: 8px; height: 8px; background: var(--safe);
+            border-radius: 50%; box-shadow: 0 0 10px var(--safe);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        h1 {
+            font-family: 'Syncopate', sans-serif;
+            font-size: 1.4rem;
+            color: var(--primary);
+            letter-spacing: 5px;
+            text-shadow: 0 0 15px var(--primary);
+        }
+
+        .search-container { display: flex; flex-direction: column; gap: 10px; }
+        .input-wrapper { position: relative; }
+
+        input {
+            width: 100%;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            padding: 12px 15px;
+            border-radius: 10px;
+            color: white;
+            font-size: 0.85rem;
+            outline: none;
+            transition: 0.3s;
+        }
+
+        input:focus { border-color: var(--primary); background: rgba(0, 242, 255, 0.05); }
+
+        .results-dropdown {
+            position: absolute;
+            top: 100%; left: 0; right: 0;
+            background: #0a0a14;
+            border: 1px solid var(--border);
+            border-radius: 0 0 10px 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+
+        .result-item {
+            padding: 10px 15px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .result-item:hover { background: var(--primary); color: black; }
+
+        .nav-label { font-size: 0.7rem; font-weight: 800; color: rgba(255,255,255,0.4); text-transform: uppercase; margin-top: 5px; }
+        .grid-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+        .btn-nav {
+            background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+            color: white; padding: 8px; border-radius: 6px;
+            font-size: 0.75rem; cursor: pointer; transition: 0.3s;
+        }
+        .btn-nav:hover { background: var(--primary); color: black; font-weight: bold; }
+
+        .btn-search {
+            background: var(--primary); color: black; border: none; padding: 18px;
+            border-radius: 12px; font-weight: 800; cursor: pointer;
+            text-transform: uppercase; letter-spacing: 2px; transition: 0.3s;
+        }
+
+        .btn-clear {
+            background: rgba(255, 71, 87, 0.1); color: var(--danger);
+            border: 1px solid var(--danger); padding: 12px; border-radius: 12px;
+            font-weight: 700; cursor: pointer; transition: 0.3s;
+        }
+
+        .data-stream {
+            background: rgba(0,0,0,0.3); padding: 12px; border-radius: 10px;
+            height: 80px; overflow: hidden; font-family: var(--font-tech);
+            font-size: 0.7rem; color: var(--safe); opacity: 0.7; border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        #map-container { border-radius: 24px; overflow: hidden; position: relative; border: 1px solid var(--border); }
+        #map { width: 100%; height: 100%; background: #000; cursor: crosshair; }
+
+        .hud-top-right {
+            position: absolute; top: 20px; right: 20px; z-index: 1000;
+            display: flex; flex-direction: column; align-items: flex-end; gap: 15px;
+        }
+
+        .compass-hud {
+            width: 80px; height: 80px; border: 2px solid var(--border);
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            background: var(--glass); position: relative;
+        }
+        .compass-hud::after {
+            content: 'N'; position: absolute; top: 5px; color: var(--danger); font-weight: 800; font-size: 10px;
+        }
+        .compass-needle {
+            width: 2px; height: 40px; background: var(--primary);
+            box-shadow: 0 0 10px var(--primary); transition: 0.3s;
+        }
+
+        .telemetry-card {
+            background: var(--glass); padding: 15px; border-radius: 12px;
+            border: 1px solid var(--border); min-width: 200px; font-family: var(--font-tech);
+        }
+
+        .route-card {
+            background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+            padding: 15px; border-radius: 12px; margin-bottom: 10px;
+            animation: slideIn 0.4s ease forwards;
+        }
+
+        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    </style>
+</head>
+<body>
+
+    <div class="grid-bg"></div>
+    <div class="scanline"></div>
+
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="status-banner">
+                <span>SYSTEM STATUS: <span style="color:var(--safe)">OPTIMAL</span></span>
+                <div class="pulse-dot"></div>
+            </div>
+
+            <h1>Wayfinding</h1>
+            
+            <div class="nav-label">Quick Region Access</div>
+            <div class="grid-nav">
+                <button class="btn-nav" onclick="zoomTo([40.7, -74], 10)">N. America</button>
+                <button class="btn-nav" onclick="zoomTo([48.8, 2.3], 10)">Europe</button>
+                <button class="btn-nav" onclick="zoomTo([35.6, 139.6], 10)">Asia</button>
+                <button class="btn-nav" onclick="zoomTo([20, 0], 2)">Global Reset</button>
+            </div>
+
+            <div class="nav-label">Mission Coordinates</div>
+            <div class="search-container">
+                <div class="input-wrapper">
+                    <input type="text" id="origin-input" placeholder="Origin" onkeyup="searchLocation(this, 'origin-results')">
+                    <div id="origin-results" class="results-dropdown"></div>
+                </div>
+                <div class="input-wrapper">
+                    <input type="text" id="dest-input" placeholder="Destination" onkeyup="searchLocation(this, 'dest-results')">
+                    <div id="dest-results" class="results-dropdown"></div>
+                </div>
+            </div>
+
+            <button class="btn-search" onclick="analyzeVectors()">Analyze Security</button>
+            <button class="btn-clear" onclick="fullReset()">Clear Map Data</button>
+
+            <div class="nav-label">Data Stream</div>
+            <div class="data-stream" id="log-stream">
+                > System Online...<br>
+                > Awaiting Satellite Uplink...
+            </div>
+
+            <div class="nav-label">Calculated Vectors</div>
+            <div class="route-info" id="route-list"></div>
+        </aside>
+
+        <div id="map-container">
+            <div id="map"></div>
+            <div class="hud-top-right">
+                <div class="compass-hud">
+                    <div class="compass-needle" id="needle"></div>
+                </div>
+                <div class="telemetry-card">
+                    <div style="color:var(--primary); font-weight:bold; margin-bottom:5px;">🛰 SATELLITE HUD</div>
+                    <div id="hud-lat" style="font-size:0.8rem;">LAT: ---</div>
+                    <div id="hud-lng" style="font-size:0.8rem;">LNG: ---</div>
+                    <div id="hud-status" style="font-size:0.8rem; color:var(--warning); margin-top:5px;">MOD: STANDBY</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([20, 0], 2);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+        let points = [];
+        let markers = [];
+        let routes = [];
+
+        // Manual clicking enabled again
+        map.on('click', (e) => {
+            if (points.length >= 2) return;
+            handleCoordinateInput(e.latlng, points.length === 0 ? "Origin" : "Destination");
+        });
+
+        function handleCoordinateInput(latlng, type) {
+            points.push(latlng);
+            const m = L.circleMarker(latlng, { radius: 10, fillColor: '#00f2ff', color: '#fff', weight: 2, fillOpacity: 1 }).addTo(map);
+            markers.push(m);
+            log(`POINT LOCKED: ${latlng.lat.toFixed(2)}, ${latlng.lng.toFixed(2)}`);
+            
+            if (type === "Origin") {
+                document.getElementById('origin-input').value = `LAT: ${latlng.lat.toFixed(2)} | LNG: ${latlng.lng.toFixed(2)}`;
+            } else {
+                document.getElementById('dest-input').value = `LAT: ${latlng.lat.toFixed(2)} | LNG: ${latlng.lng.toFixed(2)}`;
+            }
+        }
+
+        // Search logic fixed to support destination dropdown properly
+        async function searchLocation(input, resultsId) {
+            const query = input.value;
+            const dropdown = document.getElementById(resultsId);
+            if (query.length < 3) { dropdown.style.display = 'none'; return; }
+
+            try {
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}&limit=5`);
+                const data = await response.json();
+                dropdown.innerHTML = '';
+                if (data.length > 0) {
+                    dropdown.style.display = 'block';
+                    data.forEach(item => {
+                        const div = document.createElement('div');
+                        div.className = 'result-item';
+                        div.innerText = item.display_name;
+                        div.onclick = () => {
+                            input.value = item.display_name;
+                            dropdown.style.display = 'none';
+                            const latlng = { lat: parseFloat(item.lat), lng: parseFloat(item.lon) };
+                            if (input.id === 'origin-input') {
+                                if (points.length > 0) clearMapPoints(); 
+                                points[0] = latlng;
+                                addMarker(latlng);
+                            } else {
+                                points[1] = latlng;
+                                addMarker(latlng);
+                            }
+                            map.flyTo(latlng, 12);
+                            log(`LOCKED: ${item.display_name.substring(0, 15)}...`);
+                        };
+                        dropdown.appendChild(div);
+                    });
+                } else { dropdown.style.display = 'none'; }
+            } catch (err) { console.error("Search failed", err); }
+        }
+
+        function addMarker(latlng) {
+            const m = L.circleMarker(latlng, { radius: 10, fillColor: '#00f2ff', color: '#fff', weight: 2, fillOpacity: 1 }).addTo(map);
+            markers.push(m);
+        }
+
+        function analyzeVectors() {
+            if (points.length < 2) { log("ERROR: MISSING COORDS"); return; }
+            log("ANALYZING SECURITY VECTORS...");
+            document.getElementById('hud-status').innerText = "MOD: ANALYZING";
+            setTimeout(() => {
+                generateTacticalRoutes();
+                log("VECTORS ESTABLISHED.");
+                document.getElementById('hud-status').innerText = "MOD: READY";
+            }, 1000);
+        }
+
+        function generateTacticalRoutes() {
+            clearRoutes();
+            const start = points[0]; const end = points[1];
+            const offset = (Math.abs(start.lat - end.lat) + Math.abs(start.lng - end.lng)) / 10;
+            const r1 = [ [start.lat, start.lng], [(start.lat+end.lat)/2 + offset, (start.lng+end.lng)/2 + offset], [end.lat, end.lng] ];
+            const r2 = [ [start.lat, start.lng], [(start.lat+end.lat)/2 - offset, (start.lng+end.lng)/2 - offset], [end.lat, end.lng] ];
+            createPath(r1, '#00f2ff', "High Security", "Optimized CCTV & patrolled vector.");
+            createPath(r2, '#ff4757', "Moderate Risk", "Blindspot sectors detected.");
+            const group = new L.featureGroup(markers.concat(routes));
+            map.fitBounds(group.getBounds(), { padding: [100, 100] });
+        }
+
+        function createPath(pts, color, label, detail) {
+            const line = L.polyline(pts, { color: color, weight: 4, opacity: 0.8, dashArray: '8, 8' }).addTo(map);
+            const blur = L.polyline(pts, { color: color, weight: 12, opacity: 0.2 }).addTo(map);
+            routes.push(line, blur);
+            const list = document.getElementById('route-list');
+            const card = document.createElement('div');
+            card.className = 'route-card';
+            card.innerHTML = `<small style="color:${color}">● ${label.toUpperCase()}</small>
+                              <div style="font-weight:bold; margin:5px 0;">${label} Vector</div>
+                              <p style="font-size:0.75rem; opacity:0.6;">${detail}</p>`;
+            list.appendChild(card);
+        }
+
+        function fullReset() {
+            clearMapPoints();
+            document.getElementById('origin-input').value = '';
+            document.getElementById('dest-input').value = '';
+            map.flyTo([20, 0], 2);
+            log("DATA PURGED.");
+        }
+
+        function clearMapPoints() { markers.forEach(m => map.removeLayer(m)); clearRoutes(); points = []; markers = []; }
+        function clearRoutes() { routes.forEach(r => map.removeLayer(r)); routes = []; document.getElementById('route-list').innerHTML = ''; }
+        function zoomTo(coords, zoom) { map.flyTo(coords, zoom, { duration: 1.5 }); log(`JUMPING TO: ${coords}`); }
+        function log(msg) { const stream = document.getElementById('log-stream'); stream.innerHTML = `> ${msg}<br>${stream.innerHTML}`; }
+
+        map.on('mousemove', (e) => {
+            document.getElementById('hud-lat').innerText = `LAT: ${e.latlng.lat.toFixed(4)}`;
+            document.getElementById('hud-lng').innerText = `LNG: ${e.latlng.lng.toFixed(4)}`;
+            const rotation = (e.latlng.lng * 2);
+            document.getElementById('needle').style.transform = `rotate(${rotation}deg)`;
+        });
+    </script>
+</body>
+</html>
